@@ -1,5 +1,5 @@
 {
-  "name": "si-ai-support-importer"
+  "name": "si-ai-support-importer",
   "private": true,
   "type": "module",
   "scripts": {
