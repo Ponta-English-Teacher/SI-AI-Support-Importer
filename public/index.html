@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SI AI Support</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 2rem; background-color: #f4f4f4; color: #333; }
+    .section { margin-bottom: 2rem; padding: 1rem; background: #fff; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+    button { padding: 0.5rem 1rem; background-color: #3498db; color: white; border: none; border-radius: 5px; cursor: pointer; }
+    button:hover { background-color: #2980b9; }
+    textarea { width: 100%; height: 80px; margin-top: 0.5rem; padding: 0.5rem; border: 1px solid #ccc; border-radius: 5px; font-family: inherit; }
+    .chat-box { margin-top: 1rem; background-color: #eef; padding: 1rem; border-radius: 5px; white-space: pre-wrap; }
+    .popup { position: fixed; top: 60px; right: 30px; background: #fff; border: 1px solid #ccc; padding: 15px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.2); display: none; max-width: 300px; z-index: 999; }
+    .popup button { margin-top: 10px; }
+    .glossary-table { width: 100%; margin-top: 30px; border-collapse: collapse; }
+    .glossary-table th, .glossary-table td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+    .glossary-table th { background-color: #f0f0f0; }
+  </style>
+</head>
+<body>
+  <h1>SI AI Support — Self-Introduction Guided Chat</h1>
+  <div id="taskContainer"></div>
+
+  <div id="dictionaryPopup" class="popup">
+    <h4 id="dictWord">Word</h4>
+    <p id="dictDefinition">Definition goes here...</p>
+    <button onclick="confirmAddToGlossary()">➕ Add to Glossary</button>
+    <button onclick="closePopup()">✖ Close</button>
+  </div>
+
+  <table class="glossary-table" id="glossary-table">
+    <thead><tr><th>Word/Phrase</th><th>Meaning</th></tr></thead>
+    <tbody></tbody>
+  </table>
+
+  <div style="text-align: center; margin-top: 40px;">
+    <button onclick="saveAsHTML()">💾 Save My Work (Download HTML)</button>
+  </div>
+
+  <script>
+    // ============ CONFIG ============
+    const API_CHAT = "https://si-ai-support.vercel.app/api/chat";
+
+    // ============ PROMPTS ============
+    const taskPrompts = {
+      1: `You are a friendly assistant helping a student build a self-introduction presentation. Ask one question at a time to gather personal profile information such as name, birthday, hometown, school, hobbies, and favorite things. React warmly after each answer. If the English has small mistakes or sounds unnatural, gently suggest a clearer or more natural version, like 'You could also say: ...'. Avoid giving multiple questions at once. After gathering 7–9 items, say: 'Great job! You’ve finished Task 1. Let’s move on when you’re ready.'`,
+
+      2: `You are continuing to help the student. This time, guide them to reflect on their personality using simple yes/no questions, one at a time, like in an MTGI test. Be supportive and help them express themselves in basic English. After each answer, react naturally and suggest clearer phrasing when necessary. Do not list all questions at once. After 8–10 questions, summarize their personality using 3–5 traits (e.g., calm, curious, detail-oriented). Make it clear when the task is complete. The result will be used later to create Slide 3: My Personality Analysis.`,
+
+      3: `You are helping the student discover their core message and presentation theme. Begin by asking them to talk about their interests or what they like to do. Ask one open-ended question at a time, using simple language and giving relatable examples (e.g., drawing, helping others, cooking, etc.). React supportively and ask follow-up questions as needed. Suggest a few possible themes based on what they share, such as 'Creative spirit with quiet confidence' or 'Sports lover with leadership dreams'. Be sure to keep the tone encouraging and conversational.`,
+
+      4: `Help the student turn their answers into a self-introduction presentation. Based on what they shared in Tasks 1 to 3, create a slide outline with 5–7 slides. Each slide should have a clear title and slide content only (no narration). Slide 1 should be a table with fields like: Name, Birthday, Hometown, Others (left column) and their answers (right column). Slide 2 should be keywords only (e.g., Calm / Curious / Independent). Do not include narration here — narration will be created in Task 5. Ask any follow-up questions needed to fill in missing content. At the end, confirm: 'Would you like to move on to the narration practice next?'`,
+
+      5: `Work with the student to refine their presentation narration. Use the slides created in Task 4 and go through them one by one. For each slide, ask the student: 'What would you like to say for this slide?' Then help them write a natural-sounding narration, improving clarity and flow while keeping their personality and style. Give encouragement and clear suggestions. When all slides are covered, confirm: 'That’s a great draft! Would you like to practice reading it out loud or revise anything?'`
+    };
+
+    const starterUserMessages = {
+      1: "Let's begin Task 1. Please start asking questions to gather profile information.",
+      2: "Let’s begin Task 2. Please start with personality-related questions.",
+      3: "Let’s begin Task 3. Please ask what has influenced the student.",
+      4: "Let’s begin Task 4. Help the student build their slides.",
+      5: "Let’s begin Task 5. Help the student refine their final script."
+    };
+
+    let chatHistories = {};
+
+    // ============ TASKS ============
+    function createTask(taskNum, title, description) {
+      const container = document.getElementById("taskContainer");
+      const section = document.createElement("div");
+      section.className = "section";
+      section.innerHTML = `
+        <h2>Task ${taskNum}</h2>
+        <button onclick="startTask(${taskNum})">Start Task ${taskNum}</button>
+        <button onclick="resetTask(${taskNum})" style="margin-left: 10px; background-color: #e74c3c;">🗑 Reset</button>
+        <div id="chat${taskNum}" class="chat-box" style="display:none;"></div>
+        <textarea id="input${taskNum}" placeholder="Type here..." style="display:none;"></textarea><br>
+        <button id="send${taskNum}" style="display:none;" onclick="sendToGPT(${taskNum})">Send</button>
+        <button onclick="lookupSelectedText()" style="margin-top:10px; background-color: #f39c12;">📖 What does it mean?</button>
+      `;
+      container.appendChild(section);
+    }
+
+    function resetTask(taskNum) {
+      document.getElementById(`chat${taskNum}`).innerText = "";
+      document.getElementById(`input${taskNum}`).value = "";
+      document.getElementById(`chat${taskNum}`).style.display = "none";
+      document.getElementById(`input${taskNum}`).style.display = "none";
+      document.getElementById(`send${taskNum}`).style.display = "none";
+      delete chatHistories[taskNum];
+    }
+
+    async function startTask(taskNum) {
+      const chatBox = document.getElementById(`chat${taskNum}`);
+      const inputBox = document.getElementById(`input${taskNum}`);
+      const sendBtn = document.getElementById(`send${taskNum}`);
+      chatBox.style.display = inputBox.style.display = sendBtn.style.display = "block";
+
+      if (Array.isArray(chatHistories[taskNum]) && chatHistories[taskNum].length > 0) {
+        chatBox.innerText = chatHistories[taskNum]
+          .filter(m => m.role === "user" || m.role === "assistant")
+          .map(m => `${m.role === "user" ? "You" : "ChatGPT"}: ${m.content}`)
+          .join("\n\n");
+        return;
+      }
+
+      chatBox.innerText = "⏳ Loading...";
+      chatHistories[taskNum] = [
+        { role: "system", content: taskPrompts[taskNum] },
+        { role: "user", content: starterUserMessages[taskNum] }
+      ];
+
+      try {
+        const res = await fetch(API_CHAT, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: "gpt-4o", messages: chatHistories[taskNum] })
+        });
+        const data = await res.json();
+        const message = data.choices?.[0]?.message;
+        if (message) chatHistories[taskNum].push(message);
+
+        chatBox.innerText = chatHistories[taskNum]
+          .filter(m => m.role === "user" || m.role === "assistant")
+          .map(m => `${m.role === "user" ? "You" : "ChatGPT"}: ${m.content}`)
+          .join("\n\n");
+      } catch (err) {
+        chatBox.innerText = "❌ Failed to load response.";
+      }
+    }
+
+    async function sendToGPT(taskNum) {
+      const inputBox = document.getElementById(`input${taskNum}`);
+      const chatBox = document.getElementById(`chat${taskNum}`);
+      const userMessage = inputBox.value.trim();
+      if (!userMessage) return;
+      inputBox.value = "";
+      chatHistories[taskNum].push({ role: "user", content: userMessage });
+
+      try {
+        const res = await fetch(API_CHAT, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: "gpt-4o", messages: chatHistories[taskNum] })
+        });
+        const data = await res.json();
+        const message = data.choices?.[0]?.message;
+        if (message) chatHistories[taskNum].push(message);
+
+        chatBox.innerText = chatHistories[taskNum]
+          .filter(m => m.role === "user" || m.role === "assistant")
+          .map(m => `${m.role === "user" ? "You" : "ChatGPT"}: ${m.content}`)
+          .join("\n\n");
+      } catch (err) {
+        chatBox.innerText += "\n❌ Failed to get response.";
+      }
+    }
+
+    // ============ DICTIONARY ============
+    async function lookupSelectedText() {
+      const text = window.getSelection().toString().trim();
+      if (!text) { alert("Please highlight a word or phrase first."); return; }
+
+      const popup = document.getElementById('dictionaryPopup');
+      const dictWord = document.getElementById('dictWord');
+      const dictDefinition = document.getElementById('dictDefinition');
+
+      dictWord.innerText = text;
+      dictDefinition.innerText = '⏳ Loading...';
+      popup.style.display = 'block';
+
+      try {
+        const res = await fetch(API_CHAT, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: "gpt-4o", messages: [
+            { role: "system", content: "You are a helpful dictionary assistant." },
+            { role: "user", content: `Define "${text}" simply for a Japanese student.` }
+          ] })
+        });
+        const data = await res.json();
+        const definition = data.choices?.[0]?.message?.content || 'No definition found.';
+
+        const jpRes = await fetch(API_CHAT, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: "gpt-4o", messages: [
+            { role: "system", content: "You are a Japanese academic assistant." },
+            { role: "user", content: `日本語で簡単に「${text}」の意味を説明してください（大学生向け）。` }
+          ] })
+        });
+        const jpData = await jpRes.json();
+        const jpMeaning = jpData.choices?.[0]?.message?.content || '';
+
+        dictDefinition.innerHTML = `${definition}<br><br><em>（日本語の意味）</em> ${jpMeaning}`;
+      } catch (err) {
+        dictDefinition.innerText = `Error: ${err.message}`;
+      }
+    }
+
+    function confirmAddToGlossary() {
+      const word = document.getElementById('dictWord').innerText;
+      const def = document.getElementById('dictDefinition').innerHTML;
+      const row = document.createElement('tr');
+      row.innerHTML = `<td>${word}</td><td>${def}</td>`;
+      document.querySelector('#glossary-table tbody').appendChild(row);
+      closePopup();
+    }
+    function closePopup() { document.getElementById('dictionaryPopup').style.display = 'none'; }
+
+    // ============ SAVE-AS-HTML ============
+    function saveAsHTML() {
+      const state = { chatHistories };
+      const stateJSON = JSON.stringify(state);
+      const stateScript = `<script>window.SAVED_STATE=${stateJSON}<\/script>`;
+      const html = document.documentElement.outerHTML.replace(/<\/body>\s*<\/html>\s*$/i, `${stateScript}\n</body></html>`);
+      const blob = new Blob([html], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `SelfIntro_${new Date().toISOString().slice(0,10)}.html`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    // ============ INIT ============
+    createTask(1, "Basic Profile", "Start the conversation to collect your personal profile.");
+    createTask(2, "Personality Reflection", "Reflect on your personality traits through questions.");
+    createTask(3, "Discover Your Theme", "Explore what shaped you and your message.");
+    createTask(4, "Slide Planning", "Organize your content into presentation slides.");
+    createTask(5, "Narration Practice", "Finalize your speech and improve it together.");
+
+    // Restore if saved HTML has embedded state
+if (window.SAVED_STATE) {
+  chatHistories = window.SAVED_STATE.chatHistories || {};
+
+  Object.keys(chatHistories).forEach((taskNum) => {
+    const chatBox = document.getElementById(`chat${taskNum}`);
+    const inputBox = document.getElementById(`input${taskNum}`);
+    const sendBtn = document.getElementById(`send${taskNum}`);
+    const startBtn = document.querySelector(`button[onclick="startTask(${taskNum})"]`);
+
+    if (!chatBox || !inputBox || !sendBtn) return;
+
+    // Show inputs
+    chatBox.style.display = inputBox.style.display = sendBtn.style.display = "block";
+
+    // Restore messages
+    chatBox.innerText = chatHistories[taskNum]
+      .filter(m => m.role === "user" || m.role === "assistant")
+      .map(m => `${m.role === "user" ? "You" : "ChatGPT"}: ${m.content}`)
+      .join("\n\n");
+
+    // Rebind send button to continue
+    sendBtn.onclick = () => sendToGPT(taskNum);
+
+    // Disable "Start Task" so it doesn't reset history
+    if (startBtn) {
+      startBtn.disabled = true;
+      startBtn.textContent = `Task ${taskNum} (restored)`;
+    }
+  });
+}  </script>
+</body>
+</html>
+

@@ -1,0 +1,10 @@
+{
+  "name": "si-ai-support-importer"
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "npx serve public"
+  },
+  "dependencies": {}
+}
+
